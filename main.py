@@ -1,101 +1,100 @@
 import pygame
 import pymunk
-import pymunk.pygame_util
-import math
+from constants import WIDTH, HEIGHT, FPS, DT, COLOR_BLACK, COLOR_WHITE, COLOR_BOT1, COLOR_BOT2
+from simulation import Simulation
+from renderer import Renderer
 
-pygame.init()
-
-WIDTH, HEIGHT =1500, 800
-window = pygame.display.set_mode((WIDTH, HEIGHT))
-
-def draw(space, window, draw_options, pressed_body=None):
-    window.fill("black")
-    space.debug_draw(draw_options)
-    
-    if pressed_body:
-        pos = pygame.mouse.get_pos()
-        pygame.draw.line(window, (255, 255, 255), (int(pressed_body.position.x), int(pressed_body.position.y)), pos, 2)
+class PhysicsApp:
+    """
+    Two Bots connected by a Segmented Rope.
+    Controls:
+    - Bot 1: Arrow Keys to move, SPACE to anchor.
+    - Bot 2: WASD Keys to move, LEFT SHIFT to anchor.
+    - R Key: Reset simulation.
+    """
+    def __init__(self):
+        pygame.init()
+        self.window = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption("Two Bots & Segmented Rope Simulation")
         
-    pygame.display.update()
+        self.simulation = Simulation()
+        self.renderer = Renderer(self.window)
+        self.clock = pygame.time.Clock()
+        
+        self.running = True
+        self.bot1 = None
+        self.bot2 = None
 
-def create_boundaries(space, width, height):
-    rects = [[(width/2, height-1), (width, 10)],
-             [(width/2, 5), (width, 10)], 
-             [(5, height/2), (10, height)], 
-             [(width-10, height/2), (10, height)]]
+    def setup(self):
+        self.simulation.create_boundaries(WIDTH, HEIGHT)
+        
+        # Create two bots
+        self.bot1 = self.simulation.create_bot((WIDTH // 3, HEIGHT // 2))
+        self.bot2 = self.simulation.create_bot((2 * WIDTH // 3, HEIGHT // 2))
+        
+        # Set colors for debug draw (if shapes have color attribute)
+        list(self.bot1.shapes)[0].color = COLOR_BOT1 + (200,)
+        list(self.bot2.shapes)[0].color = COLOR_BOT2 + (200,)
+        
+        # Connect them with a rope
+        self.simulation.create_rope(self.bot1, self.bot2)
 
-    for pos, size in rects:
-        body = pymunk.Body(body_type=pymunk.Body.STATIC)
-        body.position = pos
-        shape = pymunk.Poly.create_box(body, size)
-        space.add(body, shape)
+    def handle_input(self):
+        keys = pygame.key.get_pressed()
+        force_magnitude = 1000000.0 # Adjust force as needed for BOT_MASS=100
+        
+        # Bot 1 Locomotion (Arrows)
+        b1_force = [0.0, 0.0]
+        if keys[pygame.K_UP]: b1_force[1] -= force_magnitude
+        if keys[pygame.K_DOWN]: b1_force[1] += force_magnitude
+        if keys[pygame.K_LEFT]: b1_force[0] -= force_magnitude
+        if keys[pygame.K_RIGHT]: b1_force[0] += force_magnitude
+        self.bot1.apply_force_at_local_point(b1_force, (0, 0))
+        
+        # Bot 2 Locomotion (WASD)
+        b2_force = [0.0, 0.0]
+        if keys[pygame.K_w]: b2_force[1] -= force_magnitude
+        if keys[pygame.K_s]: b2_force[1] += force_magnitude
+        if keys[pygame.K_a]: b2_force[0] -= force_magnitude
+        if keys[pygame.K_d]: b2_force[0] += force_magnitude
+        self.bot2.apply_force_at_local_point(b2_force, (0, 0))
 
-def create_ball(space, radius, mass, pos=(400, 300)):
-    body = pymunk.Body()
-    body.position = pos
-    shape = pymunk.Circle(body, radius)
-    shape.mass = mass
-    shape.color = (255, 0, 0, 100)
-    space.add(body, shape)
-    return shape
+        # Anchoring
+        # Bot 1: Space
+        if keys[pygame.K_SPACE]:
+            self.simulation.anchor_bot(self.bot1)
+        else:
+            self.simulation.release_bot(self.bot1)
+            
+        # Bot 2: Left Shift
+        if keys[pygame.K_LSHIFT]:
+            self.simulation.anchor_bot(self.bot2)
+        else:
+            self.simulation.release_bot(self.bot2)
 
-def run(window, width, height):
-    run = True
-    clock = pygame.time.Clock()
-    fps = 60
-    dt = 1 / fps
-
-    space = pymunk.Space()
-    space.gravity = (0, 200)
-
-    create_ball(space, 50, 50)
-    create_boundaries(space, width, height)
-
-    draw_options = pymunk.pygame_util.DrawOptions(window)
-
-    pressed_body = None
-    grabbed = False
-
-    while run:
+    def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                run = False
-                break
+                self.running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r: # Reset
+                    self.__init__()
+                    self.setup()
 
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 3:  # Right Click
-                    create_ball(space, 20, 10, event.pos)
-                
-                elif event.button == 1:  # Left Click
-                    res = space.point_query_nearest(event.pos, 0, pymunk.ShapeFilter())
-                    if res.shape and res.shape.body.body_type == pymunk.Body.DYNAMIC:
-                        pressed_body = res.shape.body
-                        if pygame.key.get_mods() & pygame.KMOD_SHIFT:
-                            grabbed = True
-                        else:
-                            grabbed = False
-
-            if event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1 and pressed_body:
-                    if not grabbed:
-                        # Slingshot mechanic
-                        mouse_pos = pygame.mouse.get_pos()
-                        force = (pressed_body.position.x - mouse_pos[0], pressed_body.position.y - mouse_pos[1])
-                        pressed_body.apply_impulse_at_local_point((force[0] * 50, force[1] * 50))
-                    
-                    pressed_body = None
-                    grabbed = False
-
-            if event.type == pygame.MOUSEMOTION:
-                if grabbed and pressed_body:
-                    pressed_body.position = event.pos
-                    pressed_body.velocity = (0, 0)
+    def run(self):
+        self.setup()
+        while self.running:
+            self.handle_events()
+            self.handle_input()
             
-        draw(space, window, draw_options, pressed_body if not grabbed else None)
-        space.step(dt)
-        clock.tick(fps)
-    
-    pygame.quit()
+            # Fixed timestep simulation
+            self.simulation.step(DT)
+            
+            self.renderer.draw(self.simulation.space)
+            self.clock.tick(FPS)
+        
+        pygame.quit()
 
 if __name__ == "__main__":
-    run(window, WIDTH, HEIGHT)
+    app = PhysicsApp()
+    app.run()
